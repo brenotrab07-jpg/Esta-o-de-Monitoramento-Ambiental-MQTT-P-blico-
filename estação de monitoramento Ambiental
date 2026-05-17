@@ -1,0 +1,113 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "DHT.h"
+
+// ================= Configurações do Sensor DHT22 =================
+#define DHTPIN 15      // Pino digital conectado ao SDA do DHT22
+#define DHTTYPE DHT22  // Definindo o modelo do sensor
+DHT dht(DHTPIN, DHTTYPE);
+
+// ================= Configurações de Rede Wi-Fi ===================
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+
+// ================= Configurações do Broker MQTT ==================
+const char* mqtt_server = "broker.hivemq.com";
+const int mqtt_port = 1883;
+
+// Tópicos MQTT para o seu portfólio (Você pode personalizá-los)
+const char* topic_temp = "portfolio/estacao/temperatura";
+const char* topic_umid = "portfolio/estacao/umidade";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+unsigned long lastMsg = 0;
+
+// Função para conectar ao Wi-Fi
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Conectando-se à rede: ");
+  Serial.println(ssid);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi conectado com sucesso!");
+  Serial.print("Endereço IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+// Função para conectar/reconectar ao broker MQTT
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Tentando conexão MQTT...");
+    // Cria um ID de cliente aleatório
+    String clientId = "ESP32Client-";
+    clientId += String(random(0xffff), HEX);
+    
+    // Tenta conectar
+    if (client.connect(clientId.c_str())) {
+      Serial.println("Conectado ao Broker MQTT!");
+    } else {
+      Serial.print("Falhou, erro: ");
+      Serial.print(client.state());
+      Serial.println(" - Tentando novamente em 5 segundos...");
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();        // Inicializa o sensor DHT
+  setup_wifi();       // Inicializa o Wi-Fi
+  client.setServer(mqtt_server, mqtt_port); // Configura o servidor MQTT
+}
+
+void loop() {
+  // Garante que a conexão MQTT está ativa
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  // Rotina de leitura e envio a cada 5 segundos
+  unsigned long now = millis();
+  if (now - lastMsg > 5000) {
+    lastMsg = now;
+
+    // Leitura dos dados do sensor
+    float h = dht.readHumidity();
+    float t = dht.readTemperature();
+
+    // Verifica se a leitura falhou
+    if (isnan(h) || isnan(t)) {
+      Serial.println("Falha ao ler do sensor DHT!");
+      return;
+    }
+
+    // Exibe no monitor serial
+    Serial.print("Temperatura: ");
+    Serial.print(t);
+    Serial.print(" °C | Umidade: ");
+    Serial.print(h);
+    Serial.println(" %");
+
+    // Converte os floats para string de caracteres (payload MQTT)
+    char tempString[8];
+    dtostrf(t, 1, 2, tempString);
+    char umidString[8];
+    dtostrf(h, 1, 2, umidString);
+
+    // Publica nos tópicos
+    client.publish(topic_temp, tempString);
+    client.publish(topic_umid, umidString);
+  }
+}
